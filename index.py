@@ -4,125 +4,185 @@ import os
 import functools
 import asyncio
 from flask import Flask, request, Response
-from telegram import Update, Bot
+from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
 
 # --- الإعدادات والمعلومات الأساسية (مضمنة في الكود مباشرة) ---
-# هام جداً: قم بتغيير هذه القيم في أقرب وقت ممكن!
+# تذكر تغيير هذه القيم لاحقاً لحماية حساباتك
 BOT_TOKEN = "7091291853:AAHZZ84aMvFmqjv4rVzQh8el2tVJoG9HExA"
 DEEPSEEK_API_KEY = "sk-4f2be0c09b3c4f518a231f7f4b2d793e"
 ADMIN_ID = 7097785684
-# !! هام جداً: غيّر هذا الرابط إلى الرابط الفعلي لخدمتك على Render !!
 RENDER_EXTERNAL_URL = "https://lawsbot.onrender.com"
-# --- التحقق من أن رابط Render تم وضعه ---
-if "your-app-name" in RENDER_EXTERNAL_URL:
-    raise ValueError("Please replace 'your-app-name.onrender.com' with your actual Render service URL in the code.")
 
 # --- متغيرات حالة البوت ---
 MONITORING_ENABLED = True
-BANNED_USERNAMES = set()
-FORBIDDEN_NAMES = ["فلان", "اسم شركة منافسة", "كلمة ممنوعة"]
+BANNED_USERS = set()  # لتخزين ID المستخدمين المحظورين
+FORBIDDEN_NAMES = ["اسم شخص معين", "اسم آخر ممنوع"]
+
+# --- القوانين لتوجيه الذكاء الاصطناعي ---
+GROUP_RULES_PROMPT = """
+أنت مشرف صارم جداً في مجموعة نقاش اسمها "مناقشات بيت فجار". مهمتك هي تحليل الرسالة التالية وتحديد ما إذا كانت تنتهك أياً من القوانين العشرة التالية.
+القوانين هي:
+١- عدم الاحترام.
+٢- استخدام أي ألفاظ نابية أو شتم أو إهانة.
+٣- نشر روابط أو إعلانات.
+٤- ذكر أسماء أشخاص حقيقيين أو بياناتهم الشخصية.
+٥- نشر صور أو مقاطع مخلة أو مسيئة.
+٦- نقاشات خارجة عن الأدب العام أو تثير الفتن.
+٧- التلميح أو التهديد أو التحريض أو التنمر.
+٨- أي محاولة للتحايل على القوانين.
+٩- التحدث في السياسة أو الدين بشكل يثير الجدل.
+١٠- أي محتوى غير لائق بشكل عام.
+
+حلل الرسالة بدقة. إذا كانت الرسالة تنتهك **أي قانون** من هذه القوانين، أجب بـ 'نعم' فقط. إذا كانت الرسالة سليمة تماماً، أجب بـ 'لا' فقط. لا تقدم أي شرح أو تفاصيل إضافية.
+"""
 
 # إعدادات تسجيل الأخطاء (Logs)
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- إعداد تطبيق Flask وخادم البوت ---
 app = Flask(__name__)
 bot = Bot(token=BOT_TOKEN)
+ptb_context = ContextTypes(bot=bot)
 
 # --- مُزخرف (Decorator) للتحقق من أن المستخدم هو المدير ---
 def admin_only(func):
     @functools.wraps(func)
-    async def wrapped(update: Update, context, *args, **kwargs): # context is now just a placeholder
-        if update.effective_user.id != ADMIN_ID:
-            await update.message.reply_text("هذا الأمر مخصص للمدير فقط.")
+    async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        user = update.effective_user
+        if not user or user.id != ADMIN_ID:
+            if update.callback_query:
+                await update.callback_query.answer("هذا الأمر مخصص للمدير فقط.", show_alert=True)
             return
         return await func(update, context, *args, **kwargs)
     return wrapped
 
-# --- وظائف الأوامر الإدارية (لا تحتاج لتعديل) ---
+# --- وظائف لوحة التحكم والأزرار ---
 @admin_only
-async def start_monitoring(update: Update, context):
+async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    monitoring_status_text = "إيقاف المراقبة 🛑" if MONITORING_ENABLED else "تشغيل المراقبة ✅"
+    monitoring_callback = "toggle_monitoring_off" if MONITORING_ENABLED else "toggle_monitoring_on"
+    
+    keyboard = [
+        [InlineKeyboardButton(monitoring_status_text, callback_data=monitoring_callback)],
+        [InlineKeyboardButton(f"عرض المحظورين ({len(BANNED_USERS)})", callback_data="view_banned")],
+        [InlineKeyboardButton("إغلاق اللوحة", callback_data="close_panel")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    panel_text = (
+        "⚙️ **لوحة تحكم المشرف** ⚙️\n\n"
+        "الحالة الحالية للمراقبة: " + ("**مُفعّلة**" if MONITORING_ENABLED else "**مُتوقفة**") + "\n\n"
+        "**الأوامر:**\n"
+        "`/ban` - (بالرد على رسالة) لحظر المستخدم.\n"
+        "`/unban` - (بالرد على رسالة) لرفع الحظر."
+    )
+    
+    if update.callback_query: # إذا كان مصدر الطلب هو زر
+        await update.callback_query.edit_message_text(text=panel_text, reply_markup=reply_markup, parse_mode='Markdown')
+    else: # إذا كان مصدر الطلب هو أمر /panel
+        await update.message.reply_text(panel_text, reply_markup=reply_markup, parse_mode='Markdown')
+
+@admin_only
+async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer() # للإجابة على الكويري وإخفاء علامة التحميل
+    
     global MONITORING_ENABLED
-    MONITORING_ENABLED = True
-    await update.message.reply_text("✅ تم تفعيل مراقبة الرسائل.")
+    
+    if query.data == "toggle_monitoring_on":
+        MONITORING_ENABLED = True
+        logger.info("Monitoring has been ENABLED by admin.")
+    elif query.data == "toggle_monitoring_off":
+        MONITORING_ENABLED = False
+        logger.info("Monitoring has been DISABLED by admin.")
+    elif query.data == "view_banned":
+        if not BANNED_USERS:
+            await query.answer("قائمة الحظر فارغة حالياً.", show_alert=True)
+            return
+        banned_list_text = "قائمة المستخدمين المحظورين (حسب الـ ID):\n" + "\n".join(f"`{user_id}`" for user_id in BANNED_USERS)
+        await query.message.reply_text(banned_list_text, parse_mode='Markdown')
+        return # لا نعدل اللوحة هنا
+    elif query.data == "close_panel":
+        await query.edit_message_text("تم إغلاق لوحة التحكم.")
+        return
+        
+    # إعادة عرض اللوحة بالحالة الجديدة
+    await show_admin_panel(update, context)
+
+# --- وظائف الحظر والرفع (بطريقة الرد) ---
+@admin_only
+async def ban_user_by_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.reply_to_message:
+        await update.message.reply_text("⚠️ للاستخدام الصحيح، قم بالرد على رسالة الشخص الذي تريد حظره بهذا الأمر.")
+        return
+    
+    user_to_ban = update.message.reply_to_message.from_user
+    BANNED_USERS.add(user_to_ban.id)
+    await update.message.reply_text(f"🚫 تم حظر المستخدم {user_to_ban.first_name} (`{user_to_ban.id}`) من إرسال الرسائل.")
+    logger.info(f"User {user_to_ban.id} BANNED by admin.")
 
 @admin_only
-async def stop_monitoring(update: Update, context):
-    global MONITORING_ENABLED
-    MONITORING_ENABLED = False
-    await update.message.reply_text("🛑 تم إيقاف مراقبة الرسائل مؤقتاً.")
+async def unban_user_by_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.reply_to_message:
+        await update.message.reply_text("⚠️ للاستخدام الصحيح، قم بالرد على رسالة الشخص الذي تريد رفع الحظر عنه بهذا الأمر.")
+        return
+        
+    user_to_unban = update.message.reply_to_message.from_user
+    if user_to_unban.id in BANNED_USERS:
+        BANNED_USERS.remove(user_to_unban.id)
+        await update.message.reply_text(f"👍 تم رفع الحظر عن المستخدم {user_to_unban.first_name} (`{user_to_unban.id}`).")
+        logger.info(f"User {user_to_unban.id} UNBANNED by admin.")
+    else:
+        await update.message.reply_text(f"المستخدم {user_to_unban.first_name} ليس في قائمة الحظر أصلاً.")
 
-@admin_only
-async def ban_user(update: Update, context):
-    try:
-        args = update.message.text.split()[1:]
-        username_to_ban = args[0].lstrip('@').lower()
-        BANNED_USERNAMES.add(username_to_ban)
-        await update.message.reply_text(f"🚫 تمت إضافة @{username_to_ban} إلى قائمة الحظر.")
-    except IndexError:
-        await update.message.reply_text("الاستخدام: /ban @username")
-
-@admin_only
-async def unban_user(update: Update, context):
-    try:
-        args = update.message.text.split()[1:]
-        username_to_unban = args[0].lstrip('@').lower()
-        if username_to_unban in BANNED_USERNAMES:
-            BANNED_USERNAMES.remove(username_to_unban)
-            await update.message.reply_text(f"👍 تم إزالة @{username_to_unban} من قائمة الحظر.")
-        else:
-            await update.message.reply_text(f"المستخدم @{username_to_unban} ليس في قائمة الحظر.")
-    except IndexError:
-        await update.message.reply_text("الاستخدام: /unban @username")
-
-# --- وظائف التحقق (لا تحتاج لتعديل) ---
+# --- وظائف التحقق (DeepSeek والأسماء الممنوعة) ---
 def is_message_inappropriate(text: str) -> bool:
     api_url = "https://api.deepseek.com/chat/completions"
     headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
-    system_prompt = "أجب بـ 'نعم' فقط إذا كانت الرسالة التالية تحتوي على إساءة، كلام بذيء، محتوى غير قانوني، عنصرية، أو تهديد. أجب بـ 'لا' إذا كانت عادية. لا تقدم أي شرح."
-    payload = {"model": "deepseek-chat", "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": text}], "temperature": 0.1, "max_tokens": 5}
+    payload = {"model": "deepseek-chat", "messages": [{"role": "system", "content": GROUP_RULES_PROMPT}, {"role": "user", "content": text}], "temperature": 0, "max_tokens": 5}
     try:
-        response = requests.post(api_url, headers=headers, json=payload, timeout=10)
+        response = requests.post(api_url, headers=headers, json=payload, timeout=15)
         response.raise_for_status()
         ai_response = response.json()['choices'][0]['message']['content'].strip().lower()
+        logger.info(f"AI check for text '{text[:30]}...': AI response is '{ai_response}'")
         return "نعم" in ai_response
     except Exception as e:
         logger.error(f"Error with DeepSeek API: {e}")
         return False
 
-def contains_forbidden_name(text: str) -> bool:
-    return any(name.lower() in text.lower() for name in FORBIDDEN_NAMES)
-
 # --- معالج الرسائل الرئيسي ---
-async def process_message(update: Update, context):
-    if not MONITORING_ENABLED or not update.message or not update.message.text: return
+async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not MONITORING_ENABLED or not update.message or not update.message.text or update.message.chat.type not in ['group', 'supergroup']:
+        return
+
     user = update.message.from_user
-    if user.id == ADMIN_ID: return
+    if user.id == ADMIN_ID:
+        return
+
     text = update.message.text
     reason_for_deletion = ""
-    if user.username and user.username.lower() in BANNED_USERNAMES:
-        reason_for_deletion = f"رسالة من مستخدم محظور (@{user.username.lower()})"
-    elif contains_forbidden_name(text):
+    
+    if user.id in BANNED_USERS:
+        reason_for_deletion = "رسالة من مستخدم محظور"
+    elif any(name.lower() in text.lower() for name in FORBIDDEN_NAMES):
         reason_for_deletion = "ذكر اسم ممنوع"
     elif is_message_inappropriate(text):
-        reason_for_deletion = "محتوى مخالف (AI)"
+        reason_for_deletion = "محتوى مخالف (بناءً على تحليل AI)"
+    
     if reason_for_deletion:
         try:
             await update.message.delete()
-            logger.info(f"Message from {user.first_name} deleted. Reason: {reason_for_deletion}.")
+            logger.info(f"Message from {user.first_name} ({user.id}) deleted. Reason: {reason_for_deletion}.")
         except Exception as e:
             logger.error(f"Failed to delete message: {e}")
 
 # --- قاموس لتوجيه الأوامر ---
 COMMAND_HANDLERS = {
-    "/start_monitoring": start_monitoring,
-    "/stop_monitoring": stop_monitoring,
-    "/ban": ban_user,
-    "/unban": unban_user,
+    "/panel": show_admin_panel,
+    "/ban": ban_user_by_reply,
+    "/unban": unban_user_by_reply,
 }
 
 # --- نقطة دخول الـ Webhook ---
@@ -132,13 +192,15 @@ def webhook_handler():
     update = Update.de_json(data=update_data, bot=bot)
     
     async def process_update():
-        if update.message and update.message.text:
+        if update.callback_query:
+            await button_callback_handler(update, ptb_context)
+        elif update.message and update.message.text:
             command = update.message.text.split()[0]
             handler = COMMAND_HANDLERS.get(command)
             if handler:
-                await handler(update, None)  # <-- التغيير هنا
+                await handler(update, ptb_context)
             else:
-                await process_message(update, None) # <-- والتغيير هنا
+                await process_message(update, ptb_context)
 
     asyncio.run(process_update())
     return Response('ok', status=200)
@@ -154,8 +216,6 @@ def setup_webhook():
         logger.error(f"Failed to set webhook: {response.text}")
         raise RuntimeError("Webhook setup failed!")
 
-# --- نقطة انطلاق الخادم ---
 if __name__ == "__main__":
     setup_webhook()
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
