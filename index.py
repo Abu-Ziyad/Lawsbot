@@ -11,7 +11,8 @@ from telegram.ext import Application, ContextTypes
 # سيتم قراءة هذه القيم من متغيرات البيئة (Environment Variables) في Render
 BOT_TOKEN = os.environ.get("7091291853:AAHZZ84aMvFmqjv4rVzQh8el2tVJoG9HExA")
 DEEPSEEK_API_KEY = os.environ.get("sk-4f2be0c09b3c4f518a231f7f4b2d793e")
-ADMIN_ID = int(os.environ.get("7097785684"))
+ADMIN_ID = 7097785684
+int(os.environ.get("ADMIN_ID"))
 # الرابط الذي سيعمل عليه البوت على Render، سيتم تعيينه تلقائياً
 WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
