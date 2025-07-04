@@ -6,7 +6,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 
 # --- الإعدادات والمعلومات الأساسية ---
 # هام جداً: استبدل هذه القيم بالقيم الجديدة بعد تغييرها
-BOT_TOKEN = "7091291853:AAG_nGI5ZxQVABrkdzwZocf9RIqUcU0tc6g"  # <-- ضع توكن البوت الجديد هنا
+BOT_TOKEN = "7091291853:AAHZZ84aMvFmqjv4rVzQh8el2tVJoG9HExA"  # <-- ضع توكن البوت الجديد هنا
 DEEPSEEK_API_KEY = "sk-4f2be0c09b3c4f518a231f7f4b2d793e" # <-- ضع مفتاح DeepSeek API الجديد هنا
 ADMIN_ID = 7097785684  # ID الخاص بك كمدير
 
