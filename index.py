@@ -12,8 +12,7 @@ BOT_TOKEN = "7091291853:AAHZZ84aMvFmqjv4rVzQh8el2tVJoG9HExA"
 DEEPSEEK_API_KEY = "sk-4f2be0c09b3c4f518a231f7f4b2d793e"
 ADMIN_ID = 7097785684
 # !! هام جداً: غيّر هذا الرابط إلى الرابط الفعلي لخدمتك على Render !!
-RENDER_EXTERNAL_URL = "https://api.render.com/deploy/srv-d1k3s8be5dus73e2vt1g?key=oL6deg5FQm4" 
-
+RENDER_EXTERNAL_URL = "https://lawsbot.onrender.com"
 # --- التحقق من أن رابط Render تم وضعه ---
 if "your-app-name" in RENDER_EXTERNAL_URL:
     raise ValueError("Please replace 'your-app-name.onrender.com' with your actual Render service URL in the code.")
