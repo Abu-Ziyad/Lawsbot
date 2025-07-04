@@ -16,7 +16,7 @@ RENDER_EXTERNAL_URL = "https://lawsbot.onrender.com"
 
 # --- متغيرات حالة البوت ---
 MONITORING_ENABLED = True
-BANNED_USERS = set()  # لتخزين ID المستخدمين المحظورين
+BANNED_USERS = set()
 FORBIDDEN_NAMES = ["اسم شخص معين", "اسم آخر ممنوع"]
 
 # --- القوانين لتوجيه الذكاء الاصطناعي ---
@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 # --- إعداد تطبيق Flask وخادم البوت ---
 app = Flask(__name__)
 bot = Bot(token=BOT_TOKEN)
-ptb_context = ContextTypes(bot=bot)
+# تم حذف السطر المسبب للمشكلة من هنا
 
 # --- مُزخرف (Decorator) للتحقق من أن المستخدم هو المدير ---
 def admin_only(func):
@@ -79,36 +79,36 @@ async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/unban` - (بالرد على رسالة) لرفع الحظر."
     )
     
-    if update.callback_query: # إذا كان مصدر الطلب هو زر
-        await update.callback_query.edit_message_text(text=panel_text, reply_markup=reply_markup, parse_mode='Markdown')
-    else: # إذا كان مصدر الطلب هو أمر /panel
+    if update.callback_query:
+        try:
+            await update.callback_query.edit_message_text(text=panel_text, reply_markup=reply_markup, parse_mode='Markdown')
+        except Exception as e:
+            logger.info(f"Could not edit message, probably unchanged: {e}")
+    else:
         await update.message.reply_text(panel_text, reply_markup=reply_markup, parse_mode='Markdown')
 
 @admin_only
 async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer() # للإجابة على الكويري وإخفاء علامة التحميل
+    await query.answer()
     
     global MONITORING_ENABLED
     
     if query.data == "toggle_monitoring_on":
         MONITORING_ENABLED = True
-        logger.info("Monitoring has been ENABLED by admin.")
     elif query.data == "toggle_monitoring_off":
         MONITORING_ENABLED = False
-        logger.info("Monitoring has been DISABLED by admin.")
     elif query.data == "view_banned":
         if not BANNED_USERS:
             await query.answer("قائمة الحظر فارغة حالياً.", show_alert=True)
-            return
-        banned_list_text = "قائمة المستخدمين المحظورين (حسب الـ ID):\n" + "\n".join(f"`{user_id}`" for user_id in BANNED_USERS)
-        await query.message.reply_text(banned_list_text, parse_mode='Markdown')
-        return # لا نعدل اللوحة هنا
+        else:
+            banned_list_text = "قائمة المستخدمين المحظورين (حسب الـ ID):\n" + "\n".join(f"`{user_id}`" for user_id in BANNED_USERS)
+            await query.message.reply_text(banned_list_text, parse_mode='Markdown')
+        return
     elif query.data == "close_panel":
         await query.edit_message_text("تم إغلاق لوحة التحكم.")
         return
         
-    # إعادة عرض اللوحة بالحالة الجديدة
     await show_admin_panel(update, context)
 
 # --- وظائف الحظر والرفع (بطريقة الرد) ---
@@ -133,7 +133,6 @@ async def unban_user_by_reply(update: Update, context: ContextTypes.DEFAULT_TYPE
     if user_to_unban.id in BANNED_USERS:
         BANNED_USERS.remove(user_to_unban.id)
         await update.message.reply_text(f"👍 تم رفع الحظر عن المستخدم {user_to_unban.first_name} (`{user_to_unban.id}`).")
-        logger.info(f"User {user_to_unban.id} UNBANNED by admin.")
     else:
         await update.message.reply_text(f"المستخدم {user_to_unban.first_name} ليس في قائمة الحظر أصلاً.")
 
@@ -193,14 +192,17 @@ def webhook_handler():
     
     async def process_update():
         if update.callback_query:
-            await button_callback_handler(update, ptb_context)
+            # تمرير None مكان الـ context الذي لم نعد نستخدمه
+            await button_callback_handler(update, None)
         elif update.message and update.message.text:
             command = update.message.text.split()[0]
             handler = COMMAND_HANDLERS.get(command)
             if handler:
-                await handler(update, ptb_context)
+                # تمرير None مكان الـ context
+                await handler(update, None)
             else:
-                await process_message(update, ptb_context)
+                # تمرير None مكان الـ context
+                await process_message(update, None)
 
     asyncio.run(process_update())
     return Response('ok', status=200)
